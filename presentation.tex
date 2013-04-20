@@ -1,0 +1,506 @@
+\documentclass[10pt]{beamer}
+\usepackage[T1]{fontenc}
+\usepackage{soul}
+\usepackage{cmap}
+\usepackage[utf8]{inputenc}
+\usepackage{listings}
+\usepackage{courier}
+\DeclareGraphicsExtensions{.png}
+
+% Custom colors
+\usepackage{color}
+\definecolor{deepblue}{rgb}{0,0,0.5}
+\definecolor{deepred}{rgb}{0.6,0,0}
+\definecolor{deepgreen}{rgb}{0,0.5,0}
+\definecolor{grey}{gray}{0.9}
+
+% Python style for highlighting
+\newcommand\pythonstyle{\lstset{
+    language=Python,
+    tabsize=2,
+    breaklines=true,
+    showstringspaces=false
+    backgroundcolor=\color{grey},
+    basicstyle=\ttfamily\scriptsize,
+    keywordstyle=\color{deepblue}\ttfamily,
+    stringstyle=\color{deepred}\ttfamily,
+    commentstyle=\color{deepgreen}\ttfamily,
+}}
+
+\newcommand\shellstyle{\lstset{
+    tabsize=2,
+    breaklines=true,
+    showstringspaces=false
+    backgroundcolor=\color{grey},
+    basicstyle=\ttfamily\scriptsize,
+}}
+% Shell environment
+\lstnewenvironment{shell}[1][]
+{
+\shellstyle
+\lstset{#1}
+}
+{}
+
+% Python environment
+\lstnewenvironment{python}[1][]
+{
+\pythonstyle
+\lstset{#1}
+}
+{}
+
+% Python for external files
+\newcommand\pythonexternal[1]{{
+\pythonstyle
+\lstinputlisting{#1}}}
+
+% Python for inline
+\newcommand\pythoninline[1]{{\pythonstyle\lstinline!#1!}}
+
+
+\begin{document}
+
+\title{Searching Inventory}
+\author{Jacques Uber}
+\date{\today}
+
+\frame{\titlepage}
+\section{Searching}
+\frame{\frametitle{What is Inventory?}
+\begin{itemize}
+    \item Infrastructure information
+        \begin{itemize}
+            \item Servers
+            \item DNS Records
+            \item Datacenters
+            \item Racks
+            \item VLANS
+            \item Networks, etc...
+            \item etc...
+        \end{itemize}
+    \item A good search helps a sysadmin troubleshoot
+\end{itemize}
+}
+
+
+\frame{\frametitle{Example Questions}
+\begin{itemize}
+    \item "Where is server X?"
+    \item "What is in the 10.2.4.0/24 network?"
+    \item "Show all the servers with 'hp' and 'mozilla.com' in their name."
+    \item "Show all the servers and DNS records that match 'foo{05-10}.mozilla.com'. Only visible from the Internet?"
+    \item "Show all 'AAAA' records in the zone 'foo.mozilla.com' that also have 'firewall' in their name."
+\end{itemize}
+    ...many more
+}
+
+\frame{\frametitle{Possible Search Solutions}
+\begin{enumerate}
+    \item Giant case statment
+        \begin{itemize}
+            \item Checkboxes selecting which types to search
+            \item Multiple search fields
+            \item Joins?
+        \end{itemize} \pause
+    \item A search DSL (Domain Specific Language)
+        \begin{itemize}
+            \item keywords (Think Google search)
+            \item Compile query string to SQL
+            \item Let the database do the hard work
+            \item What this talk is about.
+        \end{itemize}
+\end{enumerate}
+}
+
+\frame{\frametitle{My Goal}
+\begin{enumerate}
+    \item Search everything from one place \pause
+        \begin{itemize}
+            \item Every \emph{searchable} object should expose properties to be searched \pause
+        \end{itemize}
+    \item Custom searches defined in the application \pause
+    \item "Fast" \pause
+        \begin{itemize}
+            \item Number of Inventory users usually very low. Doesn't need to scale \pause
+        \end{itemize}
+    \item Reusable
+\end{enumerate}
+
+}
+
+\section{Inventory DSL}
+\frame{\frametitle{Things to consider}
+\begin{enumerate}
+    \item Everything is stored in a relational database \pause
+        \begin{itemize}
+            \item Fixed schema \pause
+            \item Strongly typed data and not everything is text (I.E. Ip addresses)\pause
+            \item In the case of DNS an explicit tree structure \pause
+        \end{itemize}
+    \item Use django's ORM to talk to the database \pause
+    \item Maybe target Django Q objects?
+\end{enumerate}
+}
+
+\frame{\frametitle{An Example Search Query}
+\begin{itemize}
+    \item "firewall db" \pause
+    \item The user is asking 'Show me everything that matches "firewall" and "db"' \pause
+        \begin{itemize}
+            \item Note the implicit AND
+        \end{itemize}
+\end{itemize}
+}
+
+\frame{\frametitle{An Example Search Query Cont.}
+\begin{itemize}
+    \item "firewall OR db" \pause
+    \item Show me everything that matches "firewall" or "db" \pause
+    \item Explicit OR
+\end{itemize}
+}
+
+\frame{\frametitle{An Example Search Query Cont.}
+\begin{itemize}
+    \item "firewall db OR host2 console" \pause
+    \item Show me everything that matches "firewall" and "db" or "host2" and "console" \pause
+        \begin{itemize}
+            \item ('firewall AND 'db') OR ('host2' AND 'console')
+        \end{itemize}
+\end{itemize}
+}
+
+\frame{\frametitle{An Example Search Query Cont.}
+\begin{itemize}
+    \item "(firewall db OR host2 !console) AND zone=:dev.mozilla.com view=:public" \pause
+    \item Show me everything that matches "firewall" and "db" or "host2" and doesn't contain "console", and it must also be a DNS record in the dev.mozilla.com DNS zone, and in the public view. \pause
+        \begin{itemize}
+            \item Things are getting complex. \pause
+            \item This looks like SQL! \pause
+            \item Note that this search only returns DNS records \pause
+            \begin{itemize}
+                \item Some types of objects are not appropriate for certain searches
+            \end{itemize}
+        \end{itemize}
+\end{itemize}
+}
+
+
+\begin{frame}[fragile]
+\frametitle{Target Django Querysets}
+\begin{itemize}
+\item (Deap Breath) Take a step back, start with a query strings with only one term \pause
+\item Consider the query string "firewall" \pause
+\item Simply return anything that matches "firewall" \pause
+\item How would we use a django Queryset to do this? \pause
+\end{itemize}
+
+\begin{python}
+>>> q = Q(hostname__icontains='firewall')
+>>> type(q)
+<class 'django.db.models.query_utils.Q'>
+>>> System.objects.filter(q)
+[<System: firewall.db.mozilla.org>]
+>>>
+\end{python}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Target Django Querysets Cont.}
+\begin{itemize}
+\item We want to search more than one column (or model attribute) \pause
+\item For example, \pythoninline{class System} has many attributes that might match a given search term \pause
+
+\item Search all attributes of \pythoninline{class System} and filter on the text "firewall": \pause
+\end{itemize}
+\begin{python}
+    def build_filter(filter_value, fields):
+        final_filter = Q()
+        for field in fields:
+            final_filter = final_filter | Q(
+                **{"{0}__icontains".format(field): filter_value}
+            )
+        return final_filter
+
+    System.search_fields = ['hostname', 'oob_ip', ... ]
+    q = build_filter('firewall', System.search_fields)
+
+    System.objects.filter(q)
+
+\end{python}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Target Django Querysets Cont.}
+\begin{itemize}
+\item A goal is to search everything \pause
+\item Map \pythoninline{build_filter} over every \emph{searchable} type \pause
+    \begin{itemize}
+        \item Use each model's \pythoninline{search_fields} attribute to do this dynamically. \pause
+    \end{itemize}
+\end{itemize}
+\begin{python}
+searchables = (
+    ('A', AddressRecord),
+    ('CNAME', CNAME),
+    ('MX', MX),
+    ('SYSTEM', System),
+    ...
+    ...
+)
+
+def compile_Q(filter_value):
+    result = []
+    for name, Klass in searchables:
+        result.append(build_filter(filter_value, Klass.search_fields))
+    return result
+\end{python}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Target Django Querysets: Operators}
+\begin{itemize}
+\item \pythoninline{compile_Q} returns a list of querysets that can be used to filter Django models (the classes contained in \pythoninline{searchables})\pause
+\item We want to logically combine these lists of querysets \pause
+\item Think vector operations: \pause
+\end{itemize}
+$$
+\begin{bmatrix} result_1 \\ result_2 \\ ... \\ result_n \end{bmatrix} =
+\begin{bmatrix} q_1 \\ q_2 \\ ... \\ q_n \end{bmatrix} \&
+\begin{bmatrix} p_1 \\ p_2 \\ ... \\ p_n \end{bmatrix}
+$$
+
+Supported Q operators:
+\begin{itemize}
+    \item AND (\&)
+    \item OR (|)
+    \item NOT (\textasciitilde)
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Operators: An Example}
+\begin{itemize}
+    \item "host1 OR ( firewall AND db )" \pause
+\end{itemize}
+\begin{python}
+def OR(left_q_sets, right_q_sets):
+    result = []
+    for ql, qr in zip(left_q_sets, right_q_sets):
+        result.append(ql | qr)
+    return result
+
+def AND(left_q_sets, right_q_sets):
+    result = []
+    for ql, qr in zip(left_q_sets, right_q_sets):
+        result.append(ql & qr)
+    return result
+
+result = OR(
+    compile_Q("host1"),
+    AND(compile_Q("firewall"), compile_Q("db"))
+)
+\end{python}
+\end{frame}
+
+\begin{frame}
+\frametitle{Front End}
+\begin{itemize}
+    \item We have the builing blocks (\pythoninline{compile_Q}) and operators to compile queries \pause
+    \item We need to interpret user search queries dynamically \pause
+    \item It is a solved problem! Yay!
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Parsley}
+\begin{itemize}
+    \item Parsley: "Parsley is a pattern matching and parsing tool for Python programmers." \pause
+    \item http://parsley.readthedocs.org/
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{DSL Part 1}
+\begin{python}
+ws = ' '*
+wss = ' '+
+not_ws = :c ?(c not in (' ', '\t')) -> c
+letter = :c ?('a' <= c <= 'z' or 'A' <= c <= 'Z') -> c
+special = '_' | '.' | '-' | ':' | ','
+
+# Lexical Operators
+NOT = '!'
+AND = <letter+>:and_ ?(and_ == 'AND') -> self.AND_op()
+OR = <letter+>:or_ ?(or_ == 'OR') -> self.OR_op()
+
+# Directive
+EQ = '=:'
+d_lhs = letter | '_'
+d_rhs = letterOrDigit | special | '/'
+DRCT = <d_lhs+>:d EQ <d_rhs+>:v -> self.directive(d, v)
+
+# Regular Expression
+RE = '/' <(not_ws)+>:r -> self.regexpr(r)
+
+# Regular text
+text = (~OR ~AND ~NOT <(letterOrDigit | special )+>:t) -> t
+TEXT = <text+>:t -> self.text(t)
+\end{python}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{DSL Part 2}
+\begin{python}
+# DSF (Device Specific Filters)
+DSF = DRCT | RE | TEXT
+
+# An atmon
+atom = DSF | parens
+
+value = NOT ws atom:a -> self.NOT_op()(a)
+| atom
+
+# Parens
+parens = '(' ws expr:e ws ')' -> e
+
+# Operators Precidence
+# 1) i_and
+# 2) 2_and
+# 3) e_or
+
+# x AND y <-- Explicit AND
+e_and = AND:op wss value:v -> (op, v)
+
+# x y <-- Implicit AND
+i_and = (' '+ ~OR ~AND) value:v -> (self.AND_op(), v)
+
+# x OR y <-- Explicit OR
+e_or = OR:op wss expr_2:v -> (op, v)
+\end{python}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{DSL Part 3}
+\begin{python}
+# Compile
+expr = expr_2:left ws e_or*:right -> self.compile(left, right)
+expr_2 = expr_3:left ws e_and*:right -> self.compile(left, right)
+expr_3 = value:left i_and*:right -> self.compile(left, right)
+\end{python}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{DSL}
+Parsley does all the hard stuff: \pause
+\begin{shell}
+[uberj@box ~]$ python invdsl.py 'firewall (baz OR fiz)'
+(firewall AND (baz OR fiz))
+\end{shell} \pause
+
+\begin{shell}
+[uberj@box ~]$ python invdsl.py 'firewall baz OR fiz'
+((firewall AND baz) OR fiz)
+\end{shell}
+\end{frame}
+
+\begin{frame}
+\frametitle{So Far...}
+\begin{itemize}
+    \item The search is kind of like the SELECT clause in SQL \pause
+    \item Good enough for just searching all your django models \pause
+    \item General enough to tack on some more interesting queries
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Directives}
+\begin{itemize}
+    \item A search term corresponds to a list of Qs that filter \emph{searchable} objects based on that term \pause
+    \begin{itemize}
+        \item We have only seen filters like: \pause
+    \end{itemize}
+\end{itemize}
+    \begin{python}
+            filter_list = [
+                ...
+                Q(field_name__icontains="keywordstring") | ...
+                ...
+            ]
+    \end{python}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Directives Cont.}
+\begin{itemize}
+    \item The list of Q objects can be built to do a more complex filter \pause
+\end{itemize}
+\begin{python}
+searchables = (
+    ('A', AddressRecord),
+    ('CNAME', CNAME),
+    ('MX', MX),
+    ('SYSTEM', System),
+    ...
+    ...
+)
+
+def build_rdtype_qsets(rdtype):
+    rdtype = rdtype.upper()
+    select = Q(pk__gt=-1)
+    no_select = Q(pk__lte=-1)
+    result = []
+    for name, Klass in searchables:
+        if name == rdtype:
+            result.append(select)
+        else:
+            result.append(no_select)
+    return result
+
+\end{python} \pause
+We can now use \pythoninline{build_type_qset('MX')} to give us a list of Q objects that when mapped onto \emph{searchables} will only return 'MX' records.
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Directives Cont.}
+\begin{itemize}
+    \item Filter by DNS view\pause
+\end{itemize}
+\begin{python}
+def build_view_qsets(view_name):
+    """Filter based on DNS views."""
+    view_name = view_name.lower() # Let's get consistent
+    try:
+        view = View.objects.get(name=view_name)
+    except ObjectDoesNotExist:
+        raise BadDirective("'{0}' isn't a valid view.".format(view_name))
+    view_filter = Q(views=view) # This will slow queries down due to joins
+    q_sets = []
+    select = Q(pk__gt=-1)
+    for name, Klass in searchables:
+        if name == 'SOA':
+            q_sets.append(select) # SOA's are always public and private
+        elif hasattr(Klass, 'views'):
+            q_sets.append(view_filter)
+        else:
+            q_sets.append(None)
+    return q_sets
+\end{python}
+\end{frame}
+
+\begin{frame}
+\frametitle{Making things \st{worse} better!}
+    \includegraphics[width=4.3in]{lol_search_dsl}
+\end{frame}
+
+\begin{frame}
+\frametitle{Demo}
+\begin{itemize}
+    \item Live Demo!
+    \item Let's hope it works!
+\end{itemize}
+\end{frame}
+\end{document}
+
